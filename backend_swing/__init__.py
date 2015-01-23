@@ -1,3 +1,3 @@
 # Copyright 2015 Broad Institute, all rights reserved.
 
-from .backend_swing import FigureCanvasSwing
+from .backend_swing import FigureCanvasSwing, NavigationToolbar2Swing
