@@ -7,3 +7,18 @@ toolkit, arguably the most complete, platform-independent one there is. It turns
 do, so here it is.
 
 Currently, very early in development - can only display figures.
+
+# How to use
+First install matplotlib and the javabridge (if you have not done so already; on Linux, you might have to install
+`libpng12-dev` and `libfreetype6-dev` first):
+
+```sh
+pip install --user matplotlib
+pip install --user git+https://github.com/CellProfiler/python-javabridge
+```
+
+Then you can run the demo:
+
+```sh
+PYTHONPATH=. python demo/canvas_demo.py
+```
