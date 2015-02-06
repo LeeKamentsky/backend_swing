@@ -359,7 +359,53 @@ class NavigationToolbar2Swing(NavigationToolbar2):
             exts = chooser.getFileFilter().getExtensions()
             ext = javabridge.get_env().get_object_array_elements(exts.o)[0]
             self.canvas.print_figure(path, format=javabridge.to_string(ext))
+
+class FigureFrameSwing(object):
     
+    def __init__(self, num, figure):
+        self.frame = javabridge.JClassWrapper('javax.swing.JFrame')()
+        self.canvas = FigureCanvasSwing(figure)
+        dimension = javabridge.JClassWrapper('java.awt.Dimension')(
+            figure.bbox.width, figure.bbox.height)
+        border_layout_cls = javabridge.JClassWrapper(
+            'java.awt.BorderLayout')    
+        self.canvas.component.setPreferredSize(dimension)
+        self.frame.add(self.canvas.component, border_layout_cls.CENTER)
+        self.toolbar = NavigationToolbar2Swing(self.canvas, self.frame)
+        self.frame.pack()
+        self.figmgr = FigureManagerSwing(self.canvas, num, self)
+
+    def get_figure_manager(self):
+        return self.figmgr
+        
+class FigureManagerSwing(FigureManagerBase):
+    def __init__(self, canvas, num, frame):
+        FigureManagerBase.__init__(self, canvas, num)
+        self.frame = frame
+        self.window = frame.frame
+        self.toolbar = frame.toolbar
+        def notify_axes_change(fig):
+            if self.toolbar is not None:
+                self.toolbar.update()
+                
+    def show(self):
+        self.window.setVisible(True)
+        
+    def destroy(self, *args):
+        self.window.dispose()
+        
+    def get_window_title(self):
+        return javabridge.to_string(self.window.getTitle())
+    
+    def set_window_title(self, title):
+        self.window.setTitle(title)
+        
+    def resize(self, width, height):
+        dimension = javabridge.JClassWrapper('java.awt.Dimension')(
+            width, height)
+        self.frame.canvas.component.setPreferredSize(dimension)
+        self.window.pack()
+        
 def _convert_agg_to_awt_image(renderer, awt_image):
     '''Use the renderer to draw the figure on a java.awt.BufferedImage
     
@@ -384,3 +430,16 @@ def _convert_agg_to_awt_image(renderer, awt_image):
     awt_image = javabridge.JClassWrapper('java.awt.image.BufferedImage')(
         cm, raster, False, None)
     return awt_image
+
+def new_figure_manager(num, *args, **kwargs):
+    FigureClass = kwargs.pop('FigureClass', matplotlib.figure.Figure)
+    fig = FigureClass(*args, **kwargs)
+    return new_figure_manager_given_figure(num, fig)
+    
+def new_figure_manager_given_figure(num, figure):
+    frame = FigureFrameSwing(num, figure)
+    figmgr = frame.get_figure_manager()
+    if matplotlib.is_interactive():
+        figmgr.frame.Show()
+
+    return figmgr

@@ -1,9 +1,11 @@
 import javabridge
 import matplotlib
+matplotlib.use("module://backend_swing")
 import matplotlib.figure
 import backend_swing
 import numpy as np
 import threading
+import matplotlib.pyplot as plt
 
 def popup_script_dlg(canvas):
     joptionpane = javabridge.JClassWrapper("javax.swing.JOptionPane")
@@ -16,39 +18,15 @@ def popup_script_dlg(canvas):
         canvas.draw()
     
 def run_ui():
-    frame = javabridge.JClassWrapper('javax.swing.JFrame')()
-    figure = matplotlib.figure.Figure()
+    figure = plt.figure()
     ax = figure.add_axes([.05, .05, .9, .9])
     x = np.linspace(0, np.pi * 8)
     ax.plot(x, np.sin(x))
-    canvas = backend_swing.FigureCanvasSwing(figure)
-    def on_key(event, canvas = canvas):
-        print "Received key %s" % repr(event)
-        if event.key == "Enter":
-            popup_script_dlg(canvas)
-    def on_release(event):
-        if event.x is None or event.y is None or event.inaxes is None:
-            print "Mouse button released outside of axis"
-            return
-        print "Mouse button released: button=%d, x=%f, y=%f, xdata=%f, ydata=%f" % (
-            event.button, event.x, event.y, event.xdata, event.ydata)
-    def on_move(event):
-        if event.x is None or event.y is None or event.inaxes is None:
-            return
-        print "Mouse moved: x=%f, y=%f, xdata=%f, ydata=%f" % (
-            event.x, event.y, event.xdata, event.ydata)
-        
-    canvas.mpl_connect('key_press_event', on_key)
-    canvas.mpl_connect('button_release_event', on_release)
-    canvas.mpl_connect('motion_notify_event', on_move)
-    center = javabridge.get_static_field('java/awt/BorderLayout', 'CENTER',
-                                         'Ljava/lang/String;')
-    javabridge.call(frame.o, "add", "(Ljava/awt/Component;Ljava/lang/Object;)V", canvas.component.o, center)
-    toolbar = backend_swing.NavigationToolbar2Swing(canvas, frame)
+    canvas = figure.canvas
+    frame = canvas.component.getTopLevelAncestor()
+    toolbar = plt.get_current_fig_manager().frame.toolbar
     toolbar.add_button(lambda event:popup_script_dlg(canvas), "hand")
-    frame.pack()
-    frame.setVisible(True)
-    frame.setSize(640, 480)
+    plt.show()
     return frame, canvas, toolbar
 
 javabridge.start_vm()
@@ -69,5 +47,6 @@ new java.awt.event.WindowAdapter() {
 """, dict(cpython=cpython, script=set_event_script))
 frame, canvas, toolbar = run_ui()
 frame.addWindowListener(adapter)
+frame.setVisible(True)
 event.wait()
 javabridge.kill_vm()
