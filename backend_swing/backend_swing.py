@@ -1,10 +1,13 @@
 # Copyright 2015 Broad Institute, all rights reserved.
+#
+# Much of the implementation is modelled on other backends in Matplotlib
+# and the code is derivative and subject to their copyright.
 
 import javabridge
 import matplotlib
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backend_bases import \
-     FigureManagerBase, NavigationToolbar2
+     FigureManagerBase, NavigationToolbar2, cursors
 import numpy as np
 import os
 
@@ -80,7 +83,7 @@ class FigureCanvasSwing(FigureCanvasAgg):
         
     def gui_repaint(self, graphics = None):
         '''Do the actual painting on the Java canvas'''
-        if not self._eqc.isDispatchThread():
+        if not self.isDispatchThread():
             self.__component.repaint()
         else:
             if self.__component.isShowing():
@@ -91,7 +94,28 @@ class FigureCanvasSwing(FigureCanvasAgg):
                 graphics.drawImage(self.jimage, 0, 0, color, None)
 
     def blit(self, bbox=None):
-        raise NotImplementedError("TODO: implement blit")
+        if bbox is None:
+            self.jimage = _convert_agg_to_awt_image(self.get_renderer(), None)
+            self._isDrawn = True
+            self.__component.repaint()
+            return
+        l, b, w, h = bbox.bounds
+        r = l + w
+        t = b + h
+        destHeight = self.jimage.getHeight(None)
+        x0 = int(l)
+        y0 = int(destHeight - t)
+        x1 = int(l + w)
+        y1 = int(destHeight - t + h)
+
+        srcImage = _convert_agg_to_awt_image(self.get_renderer(), None)
+        destGraphics = self.jimage.getGraphics()
+        destGraphics.drawImage(srcImage, 
+                               x0, y0, x1, y1, # dest coordinates
+                               x0, y0, x1, y1, # src coordinates
+                               None)
+        self._isDrawn = True
+        self.__component.repaint()
     
     def _on_component_hidden(self, event):
         pass
@@ -172,7 +196,9 @@ class FigureCanvasSwing(FigureCanvasAgg):
         self._isDrawn = False
         self.__component.repaint()
         FigureCanvasAgg.resize_event(self)
-        
+     
+    def isDispatchThread(self):
+        return self._eqc.isDispatchThread()
     
     @property
     def _eqc(self):
@@ -186,8 +212,17 @@ class NavigationToolbar2Swing(NavigationToolbar2):
     def __init__(self, canvas, frame):
         self._frame = frame
         self._tools = {}
+        self._lastrect = None
         NavigationToolbar2.__init__(self, canvas)
         self._idle = True
+        clsCursor = javabridge.JClassWrapper('java.awt.Cursor')
+        self.cursor_map = {
+            cursors.MOVE: clsCursor(clsCursor.MOVE_CURSOR),
+            cursors.HAND: clsCursor(clsCursor.HAND_CURSOR),
+            cursors.POINTER: clsCursor(clsCursor.DEFAULT_CURSOR),
+            cursors.SELECT_REGION: clsCursor(clsCursor.CROSSHAIR_CURSOR)
+        }
+        self.white = javabridge.JClassWrapper('java.awt.Color').WHITE
         
     def _init_toolbar(self):
         self.toolbar = javabridge.JClassWrapper('javax.swing.JToolBar')()
@@ -256,6 +291,74 @@ class NavigationToolbar2Swing(NavigationToolbar2):
     def add_button(self, action, icon_name):
         jaction = self.make_action(action, icon_name)
         return self.toolbar.add(jaction)
+    
+    def set_cursor(self, cursor):
+        '''Set the cursor on the canvas component'''
+        
+        self.canvas.component.setCursor(self.cursor_map[cursor])
+    
+    def draw_rubberband(self, event, x0, y0, x1, y1):
+        if not self.canvas.isDispatchThread():
+            return
+        height = self.canvas.figure.bbox.height
+        y0, y1 = [height - y for y in y0, y1]
+        (y0, y1), (x0, x1) = [[int(fn(v0, v1)) for fn in min, max] 
+                              for v0, v1 in ((y0, y1), (x0, x1))]
+        rect = (x0, y0, x1-x0, y1-y0)
+        graphics = self.canvas.component.getGraphics()
+        graphics.setXORMode(self.white)
+        try:
+            old_color = graphics.getColor()
+            try:
+                if self._lastrect != None:
+                    graphics.drawRect(*self._lastrect)
+                graphics.drawRect(*rect)
+                self._lastrect = rect
+            finally:
+                graphics.setColor(old_color)
+        finally:
+            graphics.setPaintMode()
+            
+    def release(self, event):
+        super(NavigationToolbar2Swing, self).release(event)
+        self._lastrect = None
+        
+    def dynamic_update(self):
+        self.canvas.draw()
+        
+    def save_figure(self, *args):
+        """Save the current figure"""
+        default_filetype = self.canvas.get_default_filetype()
+        filetypes = self.canvas.get_supported_filetypes_grouped()
+        def compare(a, b):
+            aname, aextensions = a
+            bname, bextensions = b
+            if default_filetype in aextensions:
+                return 0 if default_filetype in bextensions else -1
+            elif default_filetype in bextensions:
+                return 1
+            else:
+                return cmp(aname, bname)
+        filetypes = list(filetypes.items())
+        filetypes.sort(cmp=compare)
+        chooser_cls = javabridge.JClassWrapper('javax.swing.JFileChooser')
+        chooser = chooser_cls()
+        chooser.setDialogTitle("Save figure")
+        filter_cls = javabridge.JClassWrapper(
+            'javax.swing.filechooser.FileNameExtensionFilter')
+        default_filter = None
+        for name, extensions in filetypes:
+            file_filter = filter_cls(name, *extensions)
+            chooser.addChoosableFileFilter(file_filter)
+            if default_filter is None:
+                default_filter = file_filter
+        chooser.setFileFilter(default_filter)
+        result = chooser.showSaveDialog(self.canvas.component)
+        if result == chooser_cls.APPROVE_OPTION:
+            path = chooser.getSelectedFile().getAbsolutePath()
+            exts = chooser.getFileFilter().getExtensions()
+            ext = javabridge.get_env().get_object_array_elements(exts.o)[0]
+            self.canvas.print_figure(path, format=javabridge.to_string(ext))
     
 def _convert_agg_to_awt_image(renderer, awt_image):
     '''Use the renderer to draw the figure on a java.awt.BufferedImage
